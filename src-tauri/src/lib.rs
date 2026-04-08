@@ -7,7 +7,8 @@ pub mod services;
 pub mod models;
 
 use commands::{
-    github::{start_github_oauth, get_github_token, clear_github_token, get_github_user},
+    github::{start_github_oauth, get_github_token, clear_github_token, get_github_user,
+             is_oauth_configured, set_github_client_id},
     repo::{list_github_repos, list_indexed_repos, add_repo, remove_repo, get_repo},
     index::{start_index, cancel_index, get_index_status},
     search::{search, get_context, get_impact, get_graph, get_ai_summary, validate_claude_key, get_mcp_status},
@@ -29,6 +30,8 @@ pub fn run() {
             get_github_token,
             clear_github_token,
             get_github_user,
+            is_oauth_configured,
+            set_github_client_id,
             list_github_repos,
             list_indexed_repos,
             add_repo,

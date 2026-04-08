@@ -91,6 +91,7 @@ pub struct ImpactNode {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppSettings {
     pub github_token: Option<String>,
+    pub github_client_id: Option<String>,  // stored after first-run setup
     pub index_storage_path: String,
     pub claude_api_key: Option<String>,
     pub mcp_enabled: bool,

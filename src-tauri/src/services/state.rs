@@ -15,6 +15,7 @@ struct PersistedState {
 
 #[derive(Serialize, Deserialize, Default)]
 struct PersistedSettings {
+    github_client_id: Option<String>,
     claude_api_key: Option<String>,
     mcp_enabled: bool,
     auto_index_on_commit: bool,
@@ -40,6 +41,7 @@ impl AppState {
 
         let settings = AppSettings {
             github_token: persisted.github_token.clone(),
+            github_client_id: ps.github_client_id,
             index_storage_path: data_dir.join("repos").to_string_lossy().to_string(),
             claude_api_key: ps.claude_api_key,
             mcp_enabled: ps.mcp_enabled,
@@ -72,6 +74,7 @@ impl AppState {
         let persisted = PersistedState {
             github_token: token,
             settings: Some(PersistedSettings {
+                github_client_id: settings.github_client_id.clone(),
                 claude_api_key: settings.claude_api_key.clone(),
                 mcp_enabled: settings.mcp_enabled,
                 auto_index_on_commit: settings.auto_index_on_commit,

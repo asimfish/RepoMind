@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "RepoMind - Code Repository AI Knowledge Manager"
 authors = ["liyufeng"]
 edition = "2021"
+default-run = "repomindapp"
 
 [lib]
 name = "repomindapp_lib"
