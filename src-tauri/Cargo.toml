@@ -25,6 +25,7 @@ regex = "1"
 notify = { version = "7", features = ["macos_kqueue"] }
 notify-debouncer-mini = "0.5"
 dirs = "5"
+rusqlite = { version = "0.39.0", features = ["bundled"] }
 
 [[bin]]
 name = "repomind-mcp"

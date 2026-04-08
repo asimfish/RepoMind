@@ -137,15 +137,94 @@ async fn run_index(
         return Err("gitnexus analyze failed".to_string());
     }
 
+    emit("done", 95, "图谱索引完成，开始向量化...");
+
+    // ── Step 3: Build vector index (if Ollama available) ────────────────────
+    build_vector_index(&repo_id, &local_path, &app, emit).await;
+
     emit("done", 100, "索引完成 ✓");
 
-    // ── Step 3: Start file watcher for incremental updates ──────────────────
+    // ── Step 4: Start file watcher for incremental updates ──────────────────
     start_file_watcher(repo_id.clone(), local_path.clone(), app.clone());
 
     Ok(())
 }
 
-/// Parse gitnexus analyze stdout lines into (phase, percent, message)
+async fn build_vector_index<F>(repo_id: &str, local_path: &str, app: &AppHandle, emit: F)
+where
+    F: Fn(&str, u8, &str),
+{
+    use crate::services::vector::{VectorStore, VectorEntry, get_embedding, is_ollama_available, has_embed_model};
+
+    if !is_ollama_available().await {
+        emit("vector", 95, "Ollama 未运行，跳过向量索引");
+        return;
+    }
+    if !has_embed_model().await {
+        emit("vector", 95, "nomic-embed-text 未安装（运行 ollama pull nomic-embed-text）");
+        return;
+    }
+
+    emit("vector", 95, "构建语义向量索引...");
+
+    // Get data dir for this repo
+    let data_dir = if let Some(app_data) = dirs::data_dir() {
+        app_data.join("com.liyufeng.repomind").join("vectors").join(repo_id)
+    } else {
+        return;
+    };
+    let _ = std::fs::create_dir_all(&data_dir);
+
+    let store = VectorStore::new(&data_dir);
+    let _ = store.clear();
+
+    // Use gitnexus to get all symbols with snippets
+    let gitnexus = find_gitnexus_bin();
+    let output = match tokio::process::Command::new(&gitnexus)
+        .args(["cypher",
+               "MATCH (n) WHERE n.type IN ['function','class','method'] AND n.snippet IS NOT NULL RETURN n.id, n.name, n.file, n.line, n.snippet, n.type LIMIT 500",
+               "--json"])
+        .current_dir(local_path)
+        .output()
+        .await
+    {
+        Ok(o) => o,
+        Err(_) => return,
+    };
+
+    let symbols: Vec<serde_json::Value> = serde_json::from_str(
+        &String::from_utf8_lossy(&output.stdout)
+    ).unwrap_or_default();
+
+    let total = symbols.len().max(1);
+    for (i, sym) in symbols.into_iter().enumerate() {
+        let id = sym["n.id"].as_str().unwrap_or("").to_string();
+        let name = sym["n.name"].as_str().unwrap_or("").to_string();
+        let file = sym["n.file"].as_str().unwrap_or("").to_string();
+        let line = sym["n.line"].as_u64().unwrap_or(0) as u32;
+        let snippet = sym["n.snippet"].as_str().unwrap_or("").to_string();
+        let sym_type = sym["n.type"].as_str().unwrap_or("function").to_string();
+
+        if snippet.is_empty() || id.is_empty() { continue; }
+
+        // Embed: combine name + snippet for better retrieval
+        let text = format!("{}\n{}", name, &snippet[..snippet.len().min(512)]);
+        match get_embedding(&text).await {
+            Ok(embedding) => {
+                let entry = VectorEntry { id, symbol: name, file, line, snippet, symbol_type: sym_type, embedding };
+                let _ = store.insert(&entry);
+            }
+            Err(_) => continue,
+        }
+
+        if i % 10 == 0 {
+            let pct = 95 + (i * 4 / total) as u8;
+            emit("vector", pct.min(99), &format!("向量化 {}/{}", i + 1, total));
+        }
+    }
+}
+
+
 fn parse_gitnexus_line(line: &str) -> (String, u8, String) {
     let line = line.trim();
     // GitNexus outputs lines like:

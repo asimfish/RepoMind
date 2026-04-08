@@ -16,12 +16,43 @@ pub async fn search(
     let is_indexed = repo.index_status == crate::models::IndexStatus::Indexed;
     drop(repos);
 
-    if is_indexed {
+    // ── BM25 / symbol search ──────────────────────────────────────────────
+    let mut bm25_results = if is_indexed {
         gitnexus_search(&local_path, &query, &repo_name).await
-            .or_else(|_| grep_search(&local_path, &query, &repo_name))
+            .unwrap_or_else(|_| grep_search(&local_path, &query, &repo_name).unwrap_or_default())
     } else {
-        grep_search(&local_path, &query, &repo_name)
+        grep_search(&local_path, &query, &repo_name).unwrap_or_default()
+    };
+
+    // Set repo_name on all results
+    for r in &mut bm25_results { r.repo_name = repo_name.clone(); }
+
+    // ── Semantic vector search (if available) ─────────────────────────────
+    use crate::services::vector::{VectorStore, get_embedding, is_ollama_available};
+
+    if is_indexed && is_ollama_available().await {
+        let data_dir = dirs::data_dir()
+            .unwrap_or_default()
+            .join("com.liyufeng.repomind")
+            .join("vectors")
+            .join(&repo_id);
+
+        if data_dir.exists() {
+            let store = VectorStore::new(&data_dir);
+            if store.count() > 0 {
+                if let Ok(query_embedding) = get_embedding(&query).await {
+                    let vector_results = store.search(&query_embedding, 15);
+                    let mut fused = crate::services::vector::rrf_fuse(
+                        &bm25_results, &vector_results, 60.0
+                    );
+                    for r in &mut fused { r.repo_name = repo_name.clone(); }
+                    return Ok(fused.into_iter().take(25).collect());
+                }
+            }
+        }
     }
+
+    Ok(bm25_results.into_iter().take(25).collect())
 }
 
 async fn gitnexus_search(local_path: &str, query: &str, repo_name: &str) -> Result<Vec<SearchResult>, String> {
