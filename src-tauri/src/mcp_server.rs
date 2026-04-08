@@ -49,25 +49,38 @@ fn send(resp: &McpResponse) {
 }
 
 fn gitnexus_bin() -> String {
-    let node_home = std::env::var("NVM_BIN")
-        .or_else(|_| std::env::var("PNPM_HOME"))
-        .unwrap_or_default();
+    let home = dirs::home_dir().unwrap_or_default();
+    let mut candidates: Vec<String> = vec![];
 
-    for candidate in &[
-        format!("{}/gitnexus", node_home),
-        "/usr/local/bin/gitnexus".to_string(),
-        "/opt/homebrew/bin/gitnexus".to_string(),
-    ] {
-        if std::path::Path::new(candidate).exists() {
-            return candidate.clone();
+    for var in &["NVM_BIN", "PNPM_HOME"] {
+        if let Ok(p) = std::env::var(var) {
+            candidates.push(format!("{}/gitnexus", p));
         }
+    }
+
+    let nvm_versions = home.join(".nvm/versions/node");
+    if nvm_versions.exists() {
+        if let Ok(entries) = std::fs::read_dir(&nvm_versions) {
+            let mut versions: Vec<_> = entries.flatten()
+                .filter(|e| e.file_type().map(|t| t.is_dir()).unwrap_or(false))
+                .collect();
+            versions.sort_by(|a, b| b.file_name().cmp(&a.file_name()));
+            for v in versions {
+                candidates.push(v.path().join("bin/gitnexus").to_string_lossy().to_string());
+            }
+        }
+    }
+
+    candidates.push(home.join("Library/pnpm/gitnexus").to_string_lossy().to_string());
+    candidates.extend(["/usr/local/bin/gitnexus".to_string(), "/opt/homebrew/bin/gitnexus".to_string()]);
+
+    for c in &candidates {
+        if std::path::Path::new(c).exists() { return c.clone(); }
     }
 
     if let Ok(out) = std::process::Command::new("which").arg("gitnexus").output() {
         let path = String::from_utf8_lossy(&out.stdout).trim().to_string();
-        if !path.is_empty() && std::path::Path::new(&path).exists() {
-            return path;
-        }
+        if !path.is_empty() && std::path::Path::new(&path).exists() { return path; }
     }
 
     "gitnexus".to_string()

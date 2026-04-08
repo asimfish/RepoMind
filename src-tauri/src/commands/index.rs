@@ -260,35 +260,62 @@ pub fn find_gitnexus_bin_pub() -> String {
 }
 
 fn find_gitnexus_bin() -> String {
-    // 1. Check common nvm/system paths
-    let node_home = std::env::var("NVM_BIN")
-        .or_else(|_| std::env::var("PNPM_HOME"))
-        .unwrap_or_default();
+    let home = dirs::home_dir().unwrap_or_default();
 
-    let candidates: Vec<String> = vec![
-        format!("{}/gitnexus", node_home),
+    // Build a comprehensive list of candidates, covering:
+    // - NVM versions (Tauri apps don't inherit shell env, so NVM_BIN is often empty)
+    // - PNPM global
+    // - System locations
+    let mut candidates: Vec<String> = vec![];
+
+    // 1. Env vars (work when launched from terminal or if set in launchd)
+    for var in &["NVM_BIN", "PNPM_HOME"] {
+        if let Ok(p) = std::env::var(var) {
+            candidates.push(format!("{}/gitnexus", p));
+        }
+    }
+
+    // 2. Scan all NVM versions (covers app launched from Dock/Spotlight)
+    let nvm_versions = home.join(".nvm/versions/node");
+    if nvm_versions.exists() {
+        if let Ok(entries) = std::fs::read_dir(&nvm_versions) {
+            let mut versions: Vec<_> = entries
+                .flatten()
+                .filter(|e| e.file_type().map(|t| t.is_dir()).unwrap_or(false))
+                .collect();
+            // Sort descending — latest first
+            versions.sort_by(|a, b| b.file_name().cmp(&a.file_name()));
+            for v in versions {
+                let bin = v.path().join("bin/gitnexus");
+                candidates.push(bin.to_string_lossy().to_string());
+            }
+        }
+    }
+
+    // 3. PNPM global store
+    candidates.push(home.join("Library/pnpm/gitnexus").to_string_lossy().to_string());
+
+    // 4. System-wide
+    candidates.extend([
         "/usr/local/bin/gitnexus".to_string(),
         "/opt/homebrew/bin/gitnexus".to_string(),
-    ];
+    ]);
 
+    // First existing path wins
     for c in &candidates {
         if std::path::Path::new(c).exists() {
             return c.clone();
         }
     }
 
-    // 2. Try `which gitnexus` (respects user's PATH)
-    if let Ok(out) = std::process::Command::new("which")
-        .arg("gitnexus")
-        .output()
-    {
+    // 5. Try `which` (works if Tauri inherits PATH from login shell)
+    if let Ok(out) = std::process::Command::new("which").arg("gitnexus").output() {
         let path = String::from_utf8_lossy(&out.stdout).trim().to_string();
         if !path.is_empty() && std::path::Path::new(&path).exists() {
             return path;
         }
     }
 
-    // 3. Fallback: hope it's on PATH when called
     "gitnexus".to_string()
 }
 

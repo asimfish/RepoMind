@@ -21,6 +21,11 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_shell::init())
         .setup(|app| {
+            // Inherit login shell PATH on macOS so NVM/PNPM tools are discoverable
+            // (Tauri apps launched from Dock don't get the user's shell environment)
+            #[cfg(target_os = "macos")]
+            inject_shell_path();
+
             services::state::AppState::init(app.handle())?;
             setup_tray(app)?;
             Ok(())
@@ -101,5 +106,31 @@ fn show_search_spotlight(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.show();
         let _ = window.set_focus();
+    }
+}
+
+/// On macOS, apps launched from Dock/Spotlight don't inherit the user's shell PATH.
+/// This reads PATH from the login shell so NVM, PNPM, Homebrew tools are findable.
+#[cfg(target_os = "macos")]
+fn inject_shell_path() {
+    use std::process::Command;
+
+    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
+    let out = Command::new(&shell)
+        .args(["-l", "-c", "echo $PATH"])
+        .output();
+
+    if let Ok(out) = out {
+        let path = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        if !path.is_empty() {
+            // Prepend login-shell PATH to current PATH
+            let current = std::env::var("PATH").unwrap_or_default();
+            let merged = if current.is_empty() {
+                path
+            } else {
+                format!("{}:{}", path, current)
+            };
+            std::env::set_var("PATH", merged);
+        }
     }
 }
