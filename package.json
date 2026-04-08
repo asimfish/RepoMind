@@ -1,5 +1,5 @@
 {
-  "name": "repomindapp",
+  "name": "repomind",
   "private": true,
   "version": "0.1.0",
   "type": "module",
@@ -7,7 +7,9 @@
     "dev": "vite",
     "build": "vue-tsc --noEmit && vite build",
     "preview": "vite preview",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "setup:mcp": "node scripts/setup-mcp.js",
+    "build:mcp": "cargo build --release --manifest-path src-tauri/Cargo.toml --bin repomind-mcp"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",

@@ -5,6 +5,7 @@ import { useRepoStore } from '@/stores/repo'
 import { useSettingsStore } from '@/stores/settings'
 import { listen } from '@tauri-apps/api/event'
 import type { IndexProgress } from '@/types'
+import SpotlightSearch from '@/components/SpotlightSearch.vue'
 
 const router = useRouter()
 const repoStore = useRepoStore()
@@ -18,12 +19,10 @@ onMounted(async () => {
     router.replace('/login')
   }
 
-  // Listen for index progress events from Rust backend
   await listen<IndexProgress>('index-progress', (event) => {
     repoStore.updateIndexProgress(event.payload)
   })
 
-  // Listen for file change events (incremental update prompt)
   await listen<string>('repo-changed', (event) => {
     repoStore.markStale(event.payload)
   })
@@ -32,4 +31,5 @@ onMounted(async () => {
 
 <template>
   <router-view />
+  <SpotlightSearch />
 </template>
