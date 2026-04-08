@@ -10,7 +10,7 @@ use commands::{
     github::{start_github_oauth, get_github_token, clear_github_token, get_github_user},
     repo::{list_github_repos, list_indexed_repos, add_repo, remove_repo, get_repo},
     index::{start_index, cancel_index, get_index_status},
-    search::{search, get_context, get_impact},
+    search::{search, get_context, get_impact, get_graph, get_ai_summary, validate_claude_key, get_mcp_status},
     settings::{get_settings, update_settings},
 };
 
@@ -40,6 +40,10 @@ pub fn run() {
             search,
             get_context,
             get_impact,
+            get_graph,
+            get_ai_summary,
+            validate_claude_key,
+            get_mcp_status,
             get_settings,
             update_settings,
         ])

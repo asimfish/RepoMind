@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core'
-import type { GitHubUser, Repo, AppSettings, IndexStatus, SearchResult, GraphNode, ImpactResult } from '@/types'
+import type { GitHubUser, Repo, AppSettings, IndexStatus, SearchResult, GraphNode, GraphEdge, ImpactResult } from '@/types'
 
 export const githubAuthApi = {
   startOAuth: () => invoke<void>('start_github_oauth'),
@@ -29,10 +29,17 @@ export const searchApi = {
     invoke<GraphNode[]>('get_context', { repoId, symbol }),
   getImpact: (repoId: string, symbol: string) =>
     invoke<ImpactResult>('get_impact', { repoId, symbol }),
+  getGraph: (repoId: string, limit?: number) =>
+    invoke<{ nodes: GraphNode[]; edges: GraphEdge[] }>('get_graph', { repoId, limit }),
+  getSummary: (repoId: string, symbol: string) =>
+    invoke<string>('get_ai_summary', { repoId, symbol }),
 }
 
 export const settingsApi = {
   getSettings: () => invoke<AppSettings>('get_settings'),
   updateSettings: (settings: Partial<AppSettings>) =>
     invoke<void>('update_settings', { settings }),
+  validateClaudeKey: (apiKey: string) =>
+    invoke<boolean>('validate_claude_key', { apiKey }),
+  getMcpStatus: () => invoke<{ installed: boolean; path: string }>('get_mcp_status'),
 }
