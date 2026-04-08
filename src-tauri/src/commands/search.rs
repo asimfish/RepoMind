@@ -3,6 +3,14 @@ use tokio::process::Command as AsyncCommand;
 use crate::models::{SearchResult, GraphNode, ImpactResult, ImpactNode};
 use crate::services::state::AppState;
 
+fn repo_name_for(local_path: &str) -> String {
+    std::path::Path::new(local_path)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("")
+        .to_string()
+}
+
 #[tauri::command]
 pub async fn search(
     repo_id: String,
@@ -16,20 +24,16 @@ pub async fn search(
     let is_indexed = repo.index_status == crate::models::IndexStatus::Indexed;
     drop(repos);
 
-    // ── BM25 / symbol search ──────────────────────────────────────────────
-    let mut bm25_results = if is_indexed {
-        gitnexus_search(&local_path, &query, &repo_name).await
+    // ── BM25 via gitnexus query ─────────────────────────────────────────────
+    let mut results = if is_indexed {
+        gitnexus_query(&local_path, &query, &repo_name).await
             .unwrap_or_else(|_| grep_search(&local_path, &query, &repo_name).unwrap_or_default())
     } else {
         grep_search(&local_path, &query, &repo_name).unwrap_or_default()
     };
 
-    // Set repo_name on all results
-    for r in &mut bm25_results { r.repo_name = repo_name.clone(); }
-
     // ── Semantic vector search (if available) ─────────────────────────────
     use crate::services::vector::{VectorStore, get_embedding, is_ollama_available};
-
     if is_indexed && is_ollama_available().await {
         let data_dir = dirs::data_dir()
             .unwrap_or_default()
@@ -41,11 +45,10 @@ pub async fn search(
             let store = VectorStore::new(&data_dir);
             if store.count() > 0 {
                 if let Ok(query_embedding) = get_embedding(&query).await {
-                    // Only use vector search if we got a valid embedding
                     if !query_embedding.is_empty() {
                         let vector_results = store.search(&query_embedding, 15);
                         let mut fused = crate::services::vector::rrf_fuse(
-                            &bm25_results, &vector_results, 60.0
+                            &results, &vector_results, 60.0
                         );
                         for r in &mut fused { r.repo_name = repo_name.clone(); }
                         return Ok(fused.into_iter().take(25).collect());
@@ -55,49 +58,91 @@ pub async fn search(
         }
     }
 
-    Ok(bm25_results.into_iter().take(25).collect())
+    Ok(results.into_iter().take(25).collect())
 }
 
-async fn gitnexus_search(local_path: &str, query: &str, repo_name: &str) -> Result<Vec<SearchResult>, String> {
+/// gitnexus query returns { processes, process_symbols }
+async fn gitnexus_query(local_path: &str, query: &str, repo_name: &str) -> Result<Vec<SearchResult>, String> {
     let gitnexus = crate::commands::index::find_gitnexus_bin_pub();
+    let rname = repo_name_for(local_path);
+
     let output = AsyncCommand::new(&gitnexus)
-        .args(["query", query, "--json"])
+        .args(["query", query, "-r", &rname])
         .current_dir(local_path)
         .output()
         .await
         .map_err(|e| e.to_string())?;
 
     if !output.status.success() {
-        return Err("gitnexus query failed".to_string());
+        return Err(String::from_utf8_lossy(&output.stderr).to_string());
     }
 
-    let text = String::from_utf8_lossy(&output.stdout);
-    let parsed: Vec<serde_json::Value> = serde_json::from_str(&text).unwrap_or_default();
+    let body: serde_json::Value = serde_json::from_str(
+        &String::from_utf8_lossy(&output.stdout)
+    ).map_err(|e| e.to_string())?;
 
-    Ok(parsed.into_iter().take(30).filter_map(|r| {
-        Some(SearchResult {
-            symbol: r["name"].as_str()?.to_string(),
-            file: r["file"].as_str().unwrap_or("").to_string(),
-            line: r["line"].as_u64().unwrap_or(0) as u32,
-            snippet: r["snippet"].as_str().unwrap_or("").to_string(),
-            result_type: r["type"].as_str().unwrap_or("function").to_string(),
-            score: r["score"].as_f64().unwrap_or(1.0) as f32,
-            repo_name: repo_name.to_string(),
+    let symbols = body["process_symbols"].as_array().cloned().unwrap_or_default();
+
+    // Deduplicate by id
+    let mut seen = std::collections::HashSet::new();
+    let results = symbols.into_iter()
+        .filter_map(|s| {
+            let id = s["id"].as_str()?.to_string();
+            if !seen.insert(id.clone()) { return None; }
+
+            let file_path = s["filePath"].as_str().unwrap_or("").to_string();
+            let start_line = s["startLine"].as_u64().unwrap_or(0) as u32;
+            let end_line = s["endLine"].as_u64().unwrap_or(start_line as u64 + 10) as u32;
+
+            // Read actual code snippet from file
+            let snippet = read_snippet(&format!("{}/{}", local_path, file_path), start_line, end_line);
+
+            Some(SearchResult {
+                symbol: s["name"].as_str().unwrap_or("").to_string(),
+                file: file_path,
+                line: start_line,
+                snippet,
+                result_type: infer_type_from_id(&id),
+                score: 1.0 / (s["step_index"].as_f64().unwrap_or(0.0) + 1.0) as f32,
+                repo_name: repo_name.to_string(),
+            })
         })
-    }).collect())
+        .collect();
+
+    Ok(results)
+}
+
+/// Read lines from a file between start_line and end_line (1-indexed)
+fn read_snippet(file_path: &str, start: u32, end: u32) -> String {
+    let content = std::fs::read_to_string(file_path).unwrap_or_default();
+    content.lines()
+        .enumerate()
+        .filter(|(i, _)| {
+            let line = *i as u32 + 1;
+            line >= start && line <= end.min(start + 30) // max 30 lines
+        })
+        .map(|(_, l)| l)
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn infer_type_from_id(id: &str) -> String {
+    if id.starts_with("Function:") { "function" }
+    else if id.starts_with("Class:") { "class" }
+    else if id.starts_with("Method:") { "method" }
+    else if id.starts_with("Interface:") { "interface" }
+    else if id.starts_with("Variable:") { "variable" }
+    else { "function" }
+    .to_string()
 }
 
 fn grep_search(local_path: &str, query: &str, repo_name: &str) -> Result<Vec<SearchResult>, String> {
-    // Validate query length to prevent resource exhaustion
     let query = if query.len() > 200 { &query[..200] } else { query };
-
     let output = std::process::Command::new("grep")
         .args(["-rn", "--include=*.ts", "--include=*.tsx", "--include=*.js",
                "--include=*.py", "--include=*.rs", "--include=*.go",
                "--include=*.java", "--include=*.swift",
-               // Use fixed string matching for user input to avoid regex injection
-               "-F", query,
-               local_path])
+               "-F", query, local_path])
         .output()
         .map_err(|e| e.to_string())?;
 
@@ -114,28 +159,15 @@ fn parse_grep_line(line: &str, base_path: &str, repo_name: &str) -> Option<Searc
     let file = parts[0].replace(base_path, "").trim_start_matches('/').to_string();
     let line_num: u32 = parts[1].parse().ok()?;
     let snippet = parts[2].trim().to_string();
-    let (symbol, result_type) = infer_symbol(&snippet)?;
-    Some(SearchResult { symbol, file, line: line_num, snippet, result_type, score: 0.5, repo_name: repo_name.to_string() })
-}
-
-fn infer_symbol(snippet: &str) -> Option<(String, String)> {
-    let patterns = [("fn\\s+(\\w+)", "function"), ("function\\s+(\\w+)", "function"),
-                    ("def\\s+(\\w+)", "function"), ("class\\s+(\\w+)", "class"),
-                    ("interface\\s+(\\w+)", "interface"), ("const\\s+(\\w+)", "variable")];
-    for (pattern, rtype) in &patterns {
-        if let Ok(re) = regex::Regex::new(pattern) {
-            if let Some(caps) = re.captures(snippet) {
-                if let Some(name) = caps.get(1) {
-                    return Some((name.as_str().to_string(), rtype.to_string()));
-                }
-            }
-        }
-    }
-    None
-}
-
-fn regex_escape(s: &str) -> String {
-    s.chars().map(|c| if ".+*?^${}[]|()\\".contains(c) { format!("\\{}", c) } else { c.to_string() }).collect()
+    Some(SearchResult {
+        symbol: snippet.split_whitespace().nth(1).unwrap_or(&snippet).trim_end_matches('(').to_string(),
+        file,
+        line: line_num,
+        snippet,
+        result_type: "function".to_string(),
+        score: 0.3,
+        repo_name: repo_name.to_string(),
+    })
 }
 
 #[tauri::command]
@@ -149,57 +181,80 @@ pub async fn get_graph(
     let local_path = repo.local_path.clone().ok_or("Not cloned")?;
     drop(repos);
 
-    let limit = limit.unwrap_or(500);
+    let rname = repo_name_for(&local_path);
+    let limit = limit.unwrap_or(300);
     let gitnexus = crate::commands::index::find_gitnexus_bin_pub();
 
-    // Use gitnexus cypher to get graph nodes and edges
+    // Get symbol nodes (functions, classes, interfaces, etc.)
+    let node_query = format!(
+        "MATCH (n) WHERE n.startLine IS NOT NULL RETURN n.id, n.name, n.filePath, n.startLine LIMIT {}",
+        limit
+    );
     let nodes_out = AsyncCommand::new(&gitnexus)
-        .args(["cypher",
-               &format!("MATCH (n) WHERE n.type IN ['function','class','method','community'] RETURN n.id, n.name, n.type, n.file, n.line LIMIT {}", limit),
-               "--json"])
+        .args(["cypher", &node_query, "-r", &rname])
         .current_dir(&local_path)
         .output()
         .await
         .map_err(|e| e.to_string())?;
 
+    // Get edges (any relationship between symbols)
+    let edge_query = format!(
+        "MATCH (a)-[r]->(b) WHERE a.startLine IS NOT NULL AND b.startLine IS NOT NULL RETURN a.id, b.id LIMIT {}",
+        limit * 2
+    );
     let edges_out = AsyncCommand::new(&gitnexus)
-        .args(["cypher",
-               &format!("MATCH (a)-[r]->(b) RETURN a.id, type(r), b.id, r.confidence LIMIT {}", limit * 2),
-               "--json"])
+        .args(["cypher", &edge_query, "-r", &rname])
         .current_dir(&local_path)
         .output()
         .await
         .map_err(|e| e.to_string())?;
 
-    let nodes_raw: Vec<serde_json::Value> = serde_json::from_str(
-        &String::from_utf8_lossy(&nodes_out.stdout)
-    ).unwrap_or_default();
-
-    let edges_raw: Vec<serde_json::Value> = serde_json::from_str(
-        &String::from_utf8_lossy(&edges_out.stdout)
-    ).unwrap_or_default();
-
-    let nodes: Vec<serde_json::Value> = nodes_raw.into_iter().filter_map(|n| {
+    let nodes = parse_cypher_table(&String::from_utf8_lossy(&nodes_out.stdout), |cells| {
+        let id = cells.first()?.trim().to_string();
+        let label = cells.get(1).map(|s| s.trim().to_string()).unwrap_or_default();
+        let file = cells.get(2).map(|s| s.trim().to_string());
+        let line = cells.get(3).and_then(|s| s.trim().parse::<u64>().ok());
+        let node_type = infer_type_from_id(&id);
         Some(serde_json::json!({
-            "id": n["n.id"].as_str()?,
-            "label": n["n.name"].as_str().unwrap_or(""),
-            "type": n["n.type"].as_str().unwrap_or("function"),
-            "file": n["n.file"],
-            "line": n["n.line"],
+            "id": id, "label": label, "type": node_type,
+            "file": file, "line": line,
         }))
-    }).collect();
+    });
 
-    let edges: Vec<serde_json::Value> = edges_raw.into_iter().enumerate().filter_map(|(i, e)| {
+    let edges = parse_cypher_table(&String::from_utf8_lossy(&edges_out.stdout), |cells| {
+        let source = cells.first()?.trim().to_string();
+        let target = cells.get(1)?.trim().to_string();
         Some(serde_json::json!({
-            "id": format!("e{}", i),
-            "source": e["a.id"].as_str()?,
-            "target": e["b.id"].as_str()?,
-            "type": e["type(r)"].as_str().unwrap_or("calls").to_lowercase(),
-            "confidence": e["r.confidence"].as_f64().unwrap_or(1.0),
+            "id": format!("{}->{}", &source[..source.len().min(20)], &target[..target.len().min(20)]),
+            "source": source,
+            "target": target,
+            "type": "calls",
+            "confidence": 1.0,
         }))
-    }).collect();
+    });
 
     Ok(serde_json::json!({ "nodes": nodes, "edges": edges }))
+}
+
+/// Generic cypher table parser
+/// Format: { "markdown": "| col1 | col2 |\n| --- |\n| val1 | val2 |" }
+fn parse_cypher_table<F>(output: &str, mapper: F) -> Vec<serde_json::Value>
+where
+    F: Fn(&[&str]) -> Option<serde_json::Value>,
+{
+    let body: serde_json::Value = serde_json::from_str(output).unwrap_or_default();
+    let markdown = body["markdown"].as_str().unwrap_or("");
+
+    markdown.lines()
+        .filter(|l| l.starts_with('|') && !l.contains("---") && !l.contains("| n.id |") && !l.contains("| a.id |"))
+        .filter_map(|row| {
+            let cells: Vec<&str> = row.split('|')
+                .map(|c| c.trim())
+                .filter(|c| !c.is_empty())
+                .collect();
+            mapper(&cells)
+        })
+        .collect()
 }
 
 #[tauri::command]
@@ -213,27 +268,63 @@ pub async fn get_context(
     let local_path = repo.local_path.clone().ok_or("Not cloned")?;
     drop(repos);
 
+    let rname = repo_name_for(&local_path);
     let gitnexus = crate::commands::index::find_gitnexus_bin_pub();
+
     let output = AsyncCommand::new(&gitnexus)
-        .args(["context", &symbol, "--json"])
+        .args(["context", &symbol, "-r", &rname])
         .current_dir(&local_path)
         .output()
         .await
         .map_err(|e| e.to_string())?;
 
-    let text = String::from_utf8_lossy(&output.stdout);
-    let parsed: Vec<serde_json::Value> = serde_json::from_str(&text).unwrap_or_default();
+    let body: serde_json::Value = serde_json::from_str(
+        &String::from_utf8_lossy(&output.stdout)
+    ).unwrap_or_default();
 
-    Ok(parsed.into_iter().filter_map(|n| {
-        Some(GraphNode {
-            id: n["id"].as_str()?.to_string(),
-            label: n["name"].as_str().unwrap_or("").to_string(),
-            node_type: n["type"].as_str().unwrap_or("function").to_string(),
-            file: n["file"].as_str().map(|s| s.to_string()),
-            line: n["line"].as_u64().map(|l| l as u32),
-            community: n["community"].as_str().map(|s| s.to_string()),
-        })
-    }).collect())
+    let mut nodes = vec![];
+
+    // The target symbol itself
+    if let Some(sym) = body["symbol"].as_object() {
+        nodes.push(GraphNode {
+            id: sym["uid"].as_str().unwrap_or("").to_string(),
+            label: sym["name"].as_str().unwrap_or("").to_string(),
+            node_type: "function".to_string(),
+            file: sym["filePath"].as_str().map(|s| s.to_string()),
+            line: sym["startLine"].as_u64().map(|l| l as u32),
+            community: None,
+        });
+    }
+
+    // Callers (incoming calls)
+    if let Some(calls) = body["incoming"]["calls"].as_array() {
+        for c in calls {
+            nodes.push(GraphNode {
+                id: c["uid"].as_str().unwrap_or("").to_string(),
+                label: c["name"].as_str().unwrap_or("").to_string(),
+                node_type: infer_type_from_id(c["uid"].as_str().unwrap_or("")),
+                file: c["filePath"].as_str().map(|s| s.to_string()),
+                line: None,
+                community: Some("caller".to_string()),
+            });
+        }
+    }
+
+    // Callees (outgoing calls)
+    if let Some(calls) = body["outgoing"]["calls"].as_array() {
+        for c in calls {
+            nodes.push(GraphNode {
+                id: c["uid"].as_str().unwrap_or("").to_string(),
+                label: c["name"].as_str().unwrap_or("").to_string(),
+                node_type: infer_type_from_id(c["uid"].as_str().unwrap_or("")),
+                file: c["filePath"].as_str().map(|s| s.to_string()),
+                line: None,
+                community: Some("callee".to_string()),
+            });
+        }
+    }
+
+    Ok(nodes)
 }
 
 #[tauri::command]
@@ -247,34 +338,54 @@ pub async fn get_impact(
     let local_path = repo.local_path.clone().ok_or("Not cloned")?;
     drop(repos);
 
+    let rname = repo_name_for(&local_path);
     let gitnexus = crate::commands::index::find_gitnexus_bin_pub();
+
     let output = AsyncCommand::new(&gitnexus)
-        .args(["impact", &symbol, "--json"])
+        .args(["impact", &symbol, "-r", &rname])
         .current_dir(&local_path)
         .output()
         .await
         .map_err(|e| e.to_string())?;
 
-    let text = String::from_utf8_lossy(&output.stdout);
-    let parsed: serde_json::Value = serde_json::from_str(&text).unwrap_or_default();
+    let body: serde_json::Value = serde_json::from_str(
+        &String::from_utf8_lossy(&output.stdout)
+    ).unwrap_or_default();
 
-    let parse_nodes = |arr: &serde_json::Value, depth: u32| -> Vec<ImpactNode> {
-        arr.as_array().unwrap_or(&vec![]).iter().filter_map(|n| {
-            Some(ImpactNode {
-                symbol: n["name"].as_str()?.to_string(),
-                file: n["file"].as_str().unwrap_or("").to_string(),
-                confidence: n["confidence"].as_f64().unwrap_or(1.0) as f32,
-                depth,
-            })
-        }).collect()
-    };
+    // byDepth: { "1": [...], "2": [...], "3": [...] }
+    let by_depth = body["byDepth"].as_object().cloned().unwrap_or_default();
+
+    let mut directly = vec![];
+    let mut indirectly = vec![];
+
+    for (depth_str, nodes) in &by_depth {
+        let depth: u32 = depth_str.parse().unwrap_or(1);
+        if let Some(arr) = nodes.as_array() {
+            for n in arr {
+                let node = ImpactNode {
+                    symbol: n["name"].as_str().unwrap_or("").to_string(),
+                    file: n["filePath"].as_str().unwrap_or("").to_string(),
+                    confidence: n["confidence"].as_f64().unwrap_or(1.0) as f32,
+                    depth,
+                };
+                if depth == 1 { directly.push(node); }
+                else { indirectly.push(node); }
+            }
+        }
+    }
+
+    // Affected processes
+    let processes = body["affected_processes"].as_array()
+        .unwrap_or(&vec![])
+        .iter()
+        .filter_map(|p| p["name"].as_str().map(|s| s.to_string()))
+        .collect();
 
     Ok(ImpactResult {
         symbol,
-        directly_affected: parse_nodes(&parsed["direct"], 1),
-        indirectly_affected: parse_nodes(&parsed["indirect"], 2),
-        processes: parsed["processes"].as_array().unwrap_or(&vec![])
-            .iter().filter_map(|p| p.as_str().map(|s| s.to_string())).collect(),
+        directly_affected: directly,
+        indirectly_affected: indirectly,
+        processes,
     })
 }
 
@@ -292,10 +403,11 @@ pub async fn get_ai_summary(
     let local_path = repo.local_path.clone().ok_or("Not cloned")?;
     drop(repos);
 
-    // Get code snippet via gitnexus context
+    let rname = repo_name_for(&local_path);
     let gitnexus = crate::commands::index::find_gitnexus_bin_pub();
+
     let context_out = AsyncCommand::new(&gitnexus)
-        .args(["context", &symbol])
+        .args(["context", &symbol, "-r", &rname, "--content"])
         .current_dir(&local_path)
         .output()
         .await
@@ -303,7 +415,6 @@ pub async fn get_ai_summary(
 
     let context = String::from_utf8_lossy(&context_out.stdout).to_string();
 
-    // Call Claude API
     let client = reqwest::Client::new();
     let response = client
         .post("https://api.anthropic.com/v1/messages")
@@ -326,11 +437,7 @@ pub async fn get_ai_summary(
         .map_err(|e| e.to_string())?;
 
     let body: serde_json::Value = response.json().await.map_err(|e| e.to_string())?;
-    let summary = body["content"][0]["text"].as_str()
-        .unwrap_or("无法生成摘要")
-        .to_string();
-
-    Ok(summary)
+    Ok(body["content"][0]["text"].as_str().unwrap_or("无法生成摘要").to_string())
 }
 
 #[tauri::command]
@@ -343,25 +450,21 @@ pub async fn validate_claude_key(api_key: String) -> Result<bool, String> {
         .send()
         .await
         .map_err(|e| e.to_string())?;
-
     Ok(response.status().is_success())
 }
 
 #[tauri::command]
 pub async fn get_mcp_status() -> Result<serde_json::Value, String> {
-    // Check if repomind-mcp binary exists
     let home = dirs::home_dir().unwrap_or_default();
     let candidates = vec![
         home.join("Desktop/RepoMind/src-tauri/target/release/repomind-mcp"),
         home.join("Desktop/RepoMind/src-tauri/target/debug/repomind-mcp"),
         std::path::PathBuf::from("/usr/local/bin/repomind-mcp"),
     ];
-
     let found = candidates.iter().find(|p| p.exists());
     let installed = found.is_some();
     let path = found.map(|p| p.to_string_lossy().to_string()).unwrap_or_default();
 
-    // Check if registered in Claude settings
     let claude_settings = home.join(".claude/settings.json");
     let registered_claude = std::fs::read_to_string(&claude_settings)
         .ok()
