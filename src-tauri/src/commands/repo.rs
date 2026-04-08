@@ -108,8 +108,52 @@ pub async fn add_repo(
 
     let mut repos = state.indexed_repos.write().await;
     repos.insert(id, repo.clone());
+    drop(repos);
+    state.persist().await;
 
     Ok(repo)
+}
+
+/// Add a repo by GitHub URL (https://github.com/owner/repo or git@github.com:owner/repo)
+#[tauri::command]
+pub async fn add_repo_by_url(
+    url: String,
+    state: State<'_, AppState>,
+) -> Result<Repo, String> {
+    let full_name = parse_github_url(&url)
+        .ok_or_else(|| format!("无法解析 GitHub 仓库链接: {}", url))?;
+    add_repo(full_name, state).await
+}
+
+fn parse_github_url(url: &str) -> Option<String> {
+    let url = url.trim().trim_end_matches('/').trim_end_matches(".git");
+
+    // https://github.com/owner/repo  or  github.com/owner/repo
+    if let Some(rest) = url.strip_prefix("https://github.com/")
+        .or_else(|| url.strip_prefix("http://github.com/"))
+        .or_else(|| url.strip_prefix("github.com/"))
+    {
+        let parts: Vec<&str> = rest.splitn(3, '/').collect();
+        if parts.len() >= 2 && !parts[0].is_empty() && !parts[1].is_empty() {
+            return Some(format!("{}/{}", parts[0], parts[1]));
+        }
+    }
+
+    // git@github.com:owner/repo
+    if let Some(rest) = url.strip_prefix("git@github.com:") {
+        let parts: Vec<&str> = rest.splitn(2, '/').collect();
+        if parts.len() == 2 {
+            return Some(format!("{}/{}", parts[0], parts[1]));
+        }
+    }
+
+    // Plain owner/repo
+    let parts: Vec<&str> = url.splitn(2, '/').collect();
+    if parts.len() == 2 && !parts[0].contains('.') && !parts[0].is_empty() {
+        return Some(url.to_string());
+    }
+
+    None
 }
 
 #[tauri::command]

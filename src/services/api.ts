@@ -12,6 +12,7 @@ export const repoApi = {
   listGitHubRepos: (page = 1) => invoke<Repo[]>('list_github_repos', { page }),
   listIndexedRepos: () => invoke<Repo[]>('list_indexed_repos'),
   addRepo: (repoFullName: string) => invoke<Repo>('add_repo', { repoFullName }),
+  addRepoByUrl: (url: string) => invoke<Repo>('add_repo_by_url', { url }),
   removeRepo: (repoId: string) => invoke<void>('remove_repo', { repoId }),
   getRepo: (repoId: string) => invoke<Repo>('get_repo', { repoId }),
 }

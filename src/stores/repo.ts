@@ -47,6 +47,17 @@ export const useRepoStore = defineStore('repo', () => {
     const repo = await repoApi.addRepo(repoFullName)
     indexedRepos.value.push(repo)
     await indexApi.startIndex(repo.id)
+    return repo
+  }
+
+  const addRepoByUrl = async (url: string) => {
+    const repo = await repoApi.addRepoByUrl(url)
+    // avoid duplicates
+    if (!indexedRepos.value.find(r => r.id === repo.id)) {
+      indexedRepos.value.push(repo)
+    }
+    await indexApi.startIndex(repo.id)
+    return repo
   }
 
   const updateIndexProgress = (progress: IndexProgress) => {
@@ -80,6 +91,7 @@ export const useRepoStore = defineStore('repo', () => {
     loadGithubRepos,
     loadIndexedRepos,
     addAndIndexRepo,
+    addRepoByUrl,
     updateIndexProgress,
     isIndexing,
     getProgress,

@@ -7,6 +7,7 @@ const props = defineProps<{
   isAdding?: boolean
   isIndexing?: boolean
   progress?: IndexProgress
+  clickable?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -48,8 +49,9 @@ const statusColor: Record<string, string> = {
 
 <template>
   <div
-    class="card group flex flex-col gap-3 cursor-pointer hover:border-[#388bfd] transition-colors"
-    @click="emit('click')"
+    class="card group flex flex-col gap-3 transition-colors"
+    :class="clickable ? 'cursor-pointer hover:border-[#388bfd]' : 'cursor-default'"
+    @click="clickable && emit('click')"
   >
     <!-- Header -->
     <div class="flex items-start justify-between">

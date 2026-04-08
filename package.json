@@ -1,7 +1,7 @@
 {
   "name": "repomind",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -9,7 +9,9 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "setup:mcp": "node scripts/setup-mcp.js",
-    "build:mcp": "cargo build --release --manifest-path src-tauri/Cargo.toml --bin repomind-mcp"
+    "build:mcp": "cargo build --release --manifest-path src-tauri/Cargo.toml --bin repomind-mcp",
+    "version:patch": "node scripts/bump-version.js patch",
+    "version:minor": "node scripts/bump-version.js minor"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",
