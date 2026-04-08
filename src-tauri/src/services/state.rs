@@ -83,7 +83,11 @@ impl AppState {
 
         let path = self.data_dir.join("state.json");
         if let Ok(json) = serde_json::to_string_pretty(&persisted) {
-            let _ = std::fs::write(path, json);
+            // Atomic write: write to temp file then rename to avoid corruption
+            let tmp_path = self.data_dir.join("state.json.tmp");
+            if std::fs::write(&tmp_path, &json).is_ok() {
+                let _ = std::fs::rename(&tmp_path, &path);
+            }
         }
     }
 }

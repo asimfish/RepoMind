@@ -225,7 +225,10 @@ pub fn rrf_fuse(
 // ── Helpers ────────────────────────────────────────────────────────────────
 
 fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
-    if a.len() != b.len() || a.is_empty() { return 0.0; }
+    // Return 0 for mismatched or empty dimensions rather than panicking
+    if a.is_empty() || b.is_empty() || a.len() != b.len() {
+        return 0.0;
+    }
     let dot: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
     let norm_a: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
     let norm_b: f32 = b.iter().map(|x| x * x).sum::<f32>().sqrt();

@@ -49,16 +49,28 @@ fn send(resp: &McpResponse) {
 }
 
 fn gitnexus_bin() -> String {
-    for path in &[
-        "/Users/liyufeng/.nvm/versions/node/v24.14.0/bin/gitnexus",
-        "/usr/local/bin/gitnexus",
-        "/opt/homebrew/bin/gitnexus",
+    let node_home = std::env::var("NVM_BIN")
+        .or_else(|_| std::env::var("PNPM_HOME"))
+        .unwrap_or_default();
+
+    for candidate in &[
+        format!("{}/gitnexus", node_home),
+        "/usr/local/bin/gitnexus".to_string(),
+        "/opt/homebrew/bin/gitnexus".to_string(),
     ] {
-        if std::path::Path::new(path).exists() {
-            return path.to_string();
+        if std::path::Path::new(candidate).exists() {
+            return candidate.clone();
         }
     }
-    "gitnexus".into()
+
+    if let Ok(out) = std::process::Command::new("which").arg("gitnexus").output() {
+        let path = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        if !path.is_empty() && std::path::Path::new(&path).exists() {
+            return path;
+        }
+    }
+
+    "gitnexus".to_string()
 }
 
 fn state_file() -> std::path::PathBuf {

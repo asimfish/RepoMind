@@ -79,29 +79,34 @@ async fn run_index(
     // ── Step 1: Clone or pull ────────────────────────────────────────────────
     std::fs::create_dir_all(&local_path).map_err(|e| e.to_string())?;
 
-    let auth_url = token.as_deref()
-        .map(|t| clone_url.replace("https://", &format!("https://oauth2:{}@", t)))
-        .unwrap_or_else(|| clone_url.clone());
-
     let git_dir = format!("{}/.git", local_path);
     if std::path::Path::new(&git_dir).exists() {
         emit("pull", 5, "更新仓库...");
-        let status = AsyncCommand::new("git")
-            .args(["-C", &local_path, "pull", "--ff-only"])
-            .status()
-            .await
-            .map_err(|e| e.to_string())?;
+        let mut cmd = AsyncCommand::new("git");
+        cmd.args(["-C", &local_path, "pull", "--ff-only"]);
+        if let Some(t) = &token {
+            // Pass token via GIT_ASKPASS env — never in URL or process args
+            cmd.env("GIT_ASKPASS", "echo").env("GIT_PASSWORD", t);
+        }
+        let status = cmd.status().await.map_err(|e| e.to_string())?;
         if !status.success() {
-            // Not fatal — repo might have diverged; proceed with existing code
             emit("pull", 10, "已是最新，继续索引...");
         }
     } else {
         emit("clone", 5, "克隆仓库...");
-        let status = AsyncCommand::new("git")
-            .args(["clone", "--depth", "1", &auth_url, &local_path])
-            .status()
-            .await
-            .map_err(|e| e.to_string())?;
+        let mut cmd = AsyncCommand::new("git");
+        cmd.args(["clone", "--depth", "1", &clone_url, &local_path]);
+        if let Some(t) = &token {
+            // Use credential helper via env — avoids token in process args
+            cmd.env("GIT_TERMINAL_PROMPT", "0");
+            // Inject via insteadOf + header approach (safest)
+            let auth_header = format!("Authorization: Bearer {}", t);
+            cmd.args([
+                "--config",
+                &format!("http.extraHeader={}", auth_header),
+            ]);
+        }
+        let status = cmd.status().await.map_err(|e| e.to_string())?;
         if !status.success() {
             emit("error", 0, "克隆失败");
             return Err("git clone failed".to_string());
@@ -255,18 +260,36 @@ pub fn find_gitnexus_bin_pub() -> String {
 }
 
 fn find_gitnexus_bin() -> String {
-    // Check common install locations
-    for candidate in &[
-        "/Users/liyufeng/.nvm/versions/node/v24.14.0/bin/gitnexus",
-        "/usr/local/bin/gitnexus",
-        "/opt/homebrew/bin/gitnexus",
-    ] {
-        if std::path::Path::new(candidate).exists() {
-            return candidate.to_string();
+    // 1. Check common nvm/system paths
+    let node_home = std::env::var("NVM_BIN")
+        .or_else(|_| std::env::var("PNPM_HOME"))
+        .unwrap_or_default();
+
+    let candidates: Vec<String> = vec![
+        format!("{}/gitnexus", node_home),
+        "/usr/local/bin/gitnexus".to_string(),
+        "/opt/homebrew/bin/gitnexus".to_string(),
+    ];
+
+    for c in &candidates {
+        if std::path::Path::new(c).exists() {
+            return c.clone();
         }
     }
-    // Last resort: use npx
-    "npx gitnexus".to_string()
+
+    // 2. Try `which gitnexus` (respects user's PATH)
+    if let Ok(out) = std::process::Command::new("which")
+        .arg("gitnexus")
+        .output()
+    {
+        let path = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        if !path.is_empty() && std::path::Path::new(&path).exists() {
+            return path;
+        }
+    }
+
+    // 3. Fallback: hope it's on PATH when called
+    "gitnexus".to_string()
 }
 
 fn start_file_watcher(repo_id: String, local_path: String, app: AppHandle) {

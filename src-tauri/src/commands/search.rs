@@ -41,12 +41,15 @@ pub async fn search(
             let store = VectorStore::new(&data_dir);
             if store.count() > 0 {
                 if let Ok(query_embedding) = get_embedding(&query).await {
-                    let vector_results = store.search(&query_embedding, 15);
-                    let mut fused = crate::services::vector::rrf_fuse(
-                        &bm25_results, &vector_results, 60.0
-                    );
-                    for r in &mut fused { r.repo_name = repo_name.clone(); }
-                    return Ok(fused.into_iter().take(25).collect());
+                    // Only use vector search if we got a valid embedding
+                    if !query_embedding.is_empty() {
+                        let vector_results = store.search(&query_embedding, 15);
+                        let mut fused = crate::services::vector::rrf_fuse(
+                            &bm25_results, &vector_results, 60.0
+                        );
+                        for r in &mut fused { r.repo_name = repo_name.clone(); }
+                        return Ok(fused.into_iter().take(25).collect());
+                    }
                 }
             }
         }
@@ -85,11 +88,15 @@ async fn gitnexus_search(local_path: &str, query: &str, repo_name: &str) -> Resu
 }
 
 fn grep_search(local_path: &str, query: &str, repo_name: &str) -> Result<Vec<SearchResult>, String> {
+    // Validate query length to prevent resource exhaustion
+    let query = if query.len() > 200 { &query[..200] } else { query };
+
     let output = std::process::Command::new("grep")
         .args(["-rn", "--include=*.ts", "--include=*.tsx", "--include=*.js",
                "--include=*.py", "--include=*.rs", "--include=*.go",
-               "--include=*.java", "--include=*.swift", "-E",
-               &format!(r"(fn |function |def |class |const |let |interface |type )\s*{}", regex_escape(query)),
+               "--include=*.java", "--include=*.swift",
+               // Use fixed string matching for user input to avoid regex injection
+               "-F", query,
                local_path])
         .output()
         .map_err(|e| e.to_string())?;
