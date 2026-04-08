@@ -60,6 +60,13 @@ export const useRepoStore = defineStore('repo', () => {
   const isIndexing = (repoId: string) => activeIndexing.value.has(repoId)
   const getProgress = (repoId: string) => activeIndexing.value.get(repoId)
 
+  const markStale = (repoId: string) => {
+    const repo = indexedRepos.value.find(r => r.id === repoId)
+    if (repo && repo.indexStatus === 'indexed') {
+      repo.indexStatus = 'stale'
+    }
+  }
+
   return {
     currentUser,
     githubRepos,
@@ -76,5 +83,6 @@ export const useRepoStore = defineStore('repo', () => {
     updateIndexProgress,
     isIndexing,
     getProgress,
+    markStale,
   }
 })

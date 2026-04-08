@@ -22,6 +22,11 @@ onMounted(async () => {
   await listen<IndexProgress>('index-progress', (event) => {
     repoStore.updateIndexProgress(event.payload)
   })
+
+  // Listen for file change events (incremental update prompt)
+  await listen<string>('repo-changed', (event) => {
+    repoStore.markStale(event.payload)
+  })
 })
 </script>
 

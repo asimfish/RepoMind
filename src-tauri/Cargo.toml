@@ -22,3 +22,5 @@ tokio = { version = "1", features = ["full"] }
 reqwest = { version = "0.12", features = ["json"] }
 uuid = { version = "1", features = ["v4"] }
 regex = "1"
+notify = { version = "7", features = ["macos_kqueue"] }
+notify-debouncer-mini = "0.5"
