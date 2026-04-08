@@ -1,12 +1,11 @@
 use tauri::{AppHandle, Manager};
-use serde::{Deserialize, Serialize};
 
 pub mod commands;
 pub mod services;
 pub mod models;
 
 use commands::{
-    github::{start_github_oauth, get_github_token, clear_github_token, get_github_user, handle_oauth_callback},
+    github::{start_github_oauth, get_github_token, clear_github_token, get_github_user},
     repo::{list_github_repos, list_indexed_repos, add_repo, remove_repo, get_repo},
     index::{start_index, cancel_index, get_index_status},
     search::{search, get_context, get_impact},
@@ -23,27 +22,21 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            // GitHub auth
             start_github_oauth,
             get_github_token,
             clear_github_token,
             get_github_user,
-            handle_oauth_callback,
-            // Repo management
             list_github_repos,
             list_indexed_repos,
             add_repo,
             remove_repo,
             get_repo,
-            // Indexing
             start_index,
             cancel_index,
             get_index_status,
-            // Search & Query
             search,
             get_context,
             get_impact,
-            // Settings
             get_settings,
             update_settings,
         ])

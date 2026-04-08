@@ -1,4 +1,4 @@
-use tauri::State;
+use tauri::{Manager, State};
 use crate::models::AppSettings;
 use crate::services::state::AppState;
 
@@ -26,6 +26,8 @@ pub async fn update_settings(
     if let Some(v) = settings.get("searchLanguage").and_then(|v| v.as_str()) {
         current.search_language = v.to_string();
     }
+    drop(current);
 
+    state.persist().await;
     Ok(())
 }

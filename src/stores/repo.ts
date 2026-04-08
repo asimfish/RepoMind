@@ -19,8 +19,9 @@ export const useRepoStore = defineStore('repo', () => {
   }
 
   const startOAuth = async () => {
-    const url = await githubAuthApi.startOAuth()
-    return url
+    await githubAuthApi.startOAuth()
+    // Rust backend opens browser + starts local callback server
+    // Frontend listens for 'oauth-success' event in LoginView
   }
 
   const logout = async () => {
