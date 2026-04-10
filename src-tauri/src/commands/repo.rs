@@ -163,6 +163,8 @@ pub async fn remove_repo(
 ) -> Result<(), String> {
     let mut repos = state.indexed_repos.write().await;
     repos.remove(&repo_id);
+    drop(repos);
+    state.persist().await;
     Ok(())
 }
 

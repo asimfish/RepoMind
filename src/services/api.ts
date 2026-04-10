@@ -1,5 +1,19 @@
 import { invoke } from '@tauri-apps/api/core'
-import type { GitHubUser, Repo, AppSettings, IndexStatus, SearchResult, GraphNode, GraphEdge, ImpactResult } from '@/types'
+import type {
+  GitHubUser,
+  Repo,
+  AppSettings,
+  IndexStatus,
+  SearchResult,
+  GraphNode,
+  GraphEdge,
+  ImpactResult,
+  Skill,
+  SkillScanResult,
+  SkillStats,
+  WorkflowTemplate,
+  SkillGraphData,
+} from '@/types'
 
 export const githubAuthApi = {
   startOAuth: () => invoke<void>('start_github_oauth'),
@@ -43,4 +57,23 @@ export const settingsApi = {
   validateClaudeKey: (apiKey: string) =>
     invoke<boolean>('validate_claude_key', { apiKey }),
   getMcpStatus: () => invoke<{ installed: boolean; path: string }>('get_mcp_status'),
+}
+
+export const skillApi = {
+  listSkills: (platform?: string, category?: string, search?: string) =>
+    invoke<Skill[]>('list_skills', { platform, category, search }),
+  getSkill: (skillId: string) => invoke<Skill | null>('get_skill', { skillId }),
+  scanSkills: () => invoke<SkillScanResult>('scan_skills'),
+  getSkillStats: () => invoke<SkillStats>('get_skill_stats'),
+  listWorkflows: (status?: string) =>
+    invoke<WorkflowTemplate[]>('list_workflows', { status }),
+  mineWorkflows: (minFrequency?: number, minLength?: number) =>
+    invoke<WorkflowTemplate[]>('mine_workflows', { minFrequency, minLength }),
+  updateWorkflowStatus: (workflowId: string, status: string) =>
+    invoke<void>('update_workflow_status', { workflowId, status }),
+  exportWorkflow: (workflowId: string, targetDir?: string) =>
+    invoke<string>('export_workflow', { workflowId, targetDir }),
+  collectInvocations: (transcriptsDir?: string) =>
+    invoke<number>('collect_invocations', { transcriptsDir }),
+  getSkillGraph: () => invoke<SkillGraphData>('get_skill_graph'),
 }

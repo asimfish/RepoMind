@@ -4,6 +4,7 @@ import Graph from 'graphology'
 import { Sigma } from 'sigma'
 import forceAtlas2 from 'graphology-layout-forceatlas2'
 import type { GraphNode, GraphEdge } from '@/types'
+import { symbolTypeHexMap } from '@/constants/colors'
 
 const props = defineProps<{
   nodes: GraphNode[]
@@ -19,18 +20,6 @@ const containerRef = ref<HTMLDivElement>()
 let sigmaInstance: Sigma | null = null
 let graph: Graph | null = null
 
-// Color palette per node type
-const typeColors: Record<string, string> = {
-  file: '#484f58',
-  function: '#388bfd',
-  class: '#3fb950',
-  method: '#d29922',
-  community: '#a371f7',
-  process: '#f85149',
-  variable: '#8b949e',
-  interface: '#56d364',
-}
-
 const buildGraph = () => {
   if (!containerRef.value || !props.nodes.length) return
 
@@ -45,7 +34,7 @@ const buildGraph = () => {
       x: Math.cos(angle) * radius,
       y: Math.sin(angle) * radius,
       size: node.type === 'community' ? 14 : node.type === 'class' ? 10 : 7,
-      color: typeColors[node.type] ?? '#8b949e',
+      color: symbolTypeHexMap[node.type] ?? '#8b949e',
       type: 'circle',
     })
   })

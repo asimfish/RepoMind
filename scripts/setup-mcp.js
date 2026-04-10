@@ -12,12 +12,13 @@ const os = require('os')
 const { execSync } = require('child_process')
 
 const HOME = os.homedir()
+const REPO_ROOT = path.resolve(__dirname, '..')
 
 // Find repomind-mcp binary
 function findBinary() {
   const candidates = [
-    path.join(HOME, 'Desktop', 'RepoMind', 'src-tauri', 'target', 'release', 'repomind-mcp'),
-    path.join(HOME, 'Desktop', 'RepoMind', 'src-tauri', 'target', 'debug', 'repomind-mcp'),
+    path.join(REPO_ROOT, 'src-tauri', 'target', 'release', 'repomind-mcp'),
+    path.join(REPO_ROOT, 'src-tauri', 'target', 'debug', 'repomind-mcp'),
     '/usr/local/bin/repomind-mcp',
   ]
   for (const c of candidates) {
@@ -29,7 +30,7 @@ function findBinary() {
 const bin = findBinary()
 if (!bin) {
   console.error('❌  repomind-mcp binary not found. Run: cargo build --release -p repomind-mcp')
-  console.error('   Or build with: cd ~/Desktop/RepoMind && cargo build --release --manifest-path src-tauri/Cargo.toml --bin repomind-mcp')
+  console.error(`   Or build with: cd ${REPO_ROOT} && cargo build --release --manifest-path src-tauri/Cargo.toml --bin repomind-mcp`)
   process.exit(1)
 }
 

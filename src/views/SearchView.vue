@@ -3,6 +3,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useRepoStore } from '@/stores/repo'
 import type { SearchResult } from '@/types'
 import { searchApi } from '@/services/api'
+import { symbolTypeClassMap as typeColors } from '@/constants/colors'
 
 const repoStore = useRepoStore()
 const query = ref('')
@@ -32,15 +33,6 @@ const doSearch = async () => {
   } finally {
     isSearching.value = false
   }
-}
-
-const typeColors: Record<string, string> = {
-  function: 'bg-[#388bfd]/20 text-[#388bfd]',
-  class: 'bg-[#3fb950]/20 text-[#3fb950]',
-  method: 'bg-[#d29922]/20 text-[#d29922]',
-  variable: 'bg-[#8b949e]/20 text-[#8b949e]',
-  interface: 'bg-[#a371f7]/20 text-[#a371f7]',
-  enum: 'bg-[#f85149]/20 text-[#f85149]',
 }
 </script>
 
