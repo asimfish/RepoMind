@@ -4,6 +4,7 @@ use tauri::State;
 
 use crate::models::skill::*;
 use crate::services::skill_parser::SkillParser;
+use crate::services::skill_recommender::{Recommendation, SkillRecommender};
 use crate::services::skill_store::SkillStore;
 use crate::services::state::AppState;
 use crate::services::transcript_collector::TranscriptCollector;
@@ -290,4 +291,32 @@ pub async fn export_workflow(
     std::fs::write(&file_path, content).map_err(|e| e.to_string())?;
 
     Ok(file_path.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+pub async fn record_skill_usage(
+    skill_id: String,
+    event_type: String,
+    weight: Option<f32>,
+    context: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let store = SkillStore::open(&state.data_dir)?;
+    store.record_usage(
+        &skill_id,
+        &event_type,
+        weight.unwrap_or(1.0),
+        context.as_deref(),
+    )?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn get_recommendations(
+    limit: Option<usize>,
+    state: State<'_, AppState>,
+) -> Result<Vec<Recommendation>, String> {
+    let store = SkillStore::open(&state.data_dir)?;
+    let recommender = SkillRecommender::new(&store);
+    recommender.recommend(limit.unwrap_or(10))
 }

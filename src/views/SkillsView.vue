@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { useSkillStore } from '@/stores/skill'
-import { skillApi } from '@/services/api'
-import type { SkillGraphData } from '@/types'
+import { recommendApi, skillApi } from '@/services/api'
+import type { Recommendation, SkillGraphData } from '@/types'
 import SkillCard from '@/components/SkillCard.vue'
 
 const skillStore = useSkillStore()
@@ -12,6 +12,33 @@ const categoryFilter = ref('')
 const activeTab = ref<'list' | 'graph'>('list')
 const graphData = ref<SkillGraphData | null>(null)
 const graphLoading = ref(false)
+const recommendations = ref<Recommendation[]>([])
+const recLoading = ref(false)
+
+function scoreBarPct(score: number) {
+  const v = Number(score)
+  if (Number.isNaN(v)) return 0
+  return v <= 1 ? Math.round(v * 100) : Math.min(100, Math.round(v))
+}
+
+async function loadRecommendations() {
+  recLoading.value = true
+  try {
+    recommendations.value = await recommendApi.getRecommendations(6)
+  } catch {
+    recommendations.value = []
+  } finally {
+    recLoading.value = false
+  }
+}
+
+async function onRecommendClick(rec: Recommendation) {
+  try {
+    await recommendApi.recordUsage(rec.skill.id, 'view')
+  } catch {
+    /* 后端未实现时忽略 */
+  }
+}
 
 const platformOptions = [
   { value: '', label: '全部平台' },
@@ -74,7 +101,12 @@ watch(activeTab, tab => {
 })
 
 onMounted(async () => {
-  await Promise.all([skillStore.loadStats(), skillStore.loadWorkflows(), applyFilters()])
+  await Promise.all([
+    skillStore.loadStats(),
+    skillStore.loadWorkflows(),
+    applyFilters(),
+    loadRecommendations(),
+  ])
 })
 
 async function onRescan() {
@@ -113,6 +145,56 @@ async function onRescan() {
         {{ skillStore.scanning ? '扫描中…' : '重新扫描' }}
       </button>
     </div>
+
+    <!-- 推荐 -->
+    <section class="mb-5">
+      <h2 class="mb-3 text-sm font-semibold text-[#e6edf3]">为你推荐</h2>
+      <div
+        v-if="recLoading"
+        class="flex h-24 items-center justify-center rounded-lg border border-[#30363d] bg-[#161b22]"
+      >
+        <div class="h-5 w-5 animate-spin rounded-full border-2 border-[#388bfd] border-t-transparent" />
+      </div>
+      <div
+        v-else-if="recommendations.length === 0"
+        class="rounded-lg border border-[#30363d] bg-[#161b22] px-4 py-6 text-center text-sm text-[#484f58]"
+      >
+        暂无推荐（或推荐服务未就绪）
+      </div>
+      <div
+        v-else
+        class="flex gap-3 overflow-x-auto pb-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+      >
+        <button
+          v-for="rec in recommendations"
+          :key="rec.skill.id"
+          type="button"
+          class="card w-[min(280px,calc(100vw-6rem))] flex-shrink-0 cursor-pointer text-left transition-colors hover:border-[#388bfd]/70"
+          @click="onRecommendClick(rec)"
+        >
+          <p class="text-sm font-medium text-[#e6edf3]">{{ rec.skill.name }}</p>
+          <p class="mt-1 line-clamp-2 text-xs leading-relaxed text-[#8b949e]">
+            {{ rec.reason || '暂无理由' }}
+          </p>
+          <div v-if="rec.reasonType" class="mt-2">
+            <span class="rounded bg-[#21262d] px-1.5 py-0.5 font-mono text-[10px] text-[#8b949e]">
+              {{ rec.reasonType }}
+            </span>
+          </div>
+          <div class="mt-3 flex items-center gap-2">
+            <div class="h-1.5 flex-1 overflow-hidden rounded-full bg-[#21262d]">
+              <div
+                class="h-full rounded-full bg-[#388bfd]"
+                :style="{ width: `${scoreBarPct(rec.score)}%` }"
+              />
+            </div>
+            <span class="w-10 text-right text-[10px] tabular-nums text-[#c9d1d9]">
+              {{ scoreBarPct(rec.score) }}%
+            </span>
+          </div>
+        </button>
+      </div>
+    </section>
 
     <!-- Stats -->
     <div class="mb-4 grid gap-3 sm:grid-cols-3">

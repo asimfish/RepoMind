@@ -162,6 +162,14 @@ impl WorkflowStatus {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct UsageStats {
+    pub total_count: u32,
+    pub last_7_days: u32,
+    pub last_30_days: u32,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WorkflowTemplate {

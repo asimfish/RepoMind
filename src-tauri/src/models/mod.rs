@@ -1,4 +1,6 @@
+pub mod agent;
 pub mod skill;
+pub mod rules;
 
 use serde::{Deserialize, Serialize};
 

@@ -13,6 +13,10 @@ import type {
   SkillStats,
   WorkflowTemplate,
   SkillGraphData,
+  Recommendation,
+  BehaviorRule,
+  RuleStats,
+  ExtractionBatch,
 } from '@/types'
 
 export const githubAuthApi = {
@@ -76,4 +80,28 @@ export const skillApi = {
   collectInvocations: (transcriptsDir?: string) =>
     invoke<number>('collect_invocations', { transcriptsDir }),
   getSkillGraph: () => invoke<SkillGraphData>('get_skill_graph'),
+}
+
+export const recommendApi = {
+  getRecommendations: (limit?: number) =>
+    invoke<Recommendation[]>('get_recommendations', { limit }),
+  recordUsage: (skillId: string, eventType: string) =>
+    invoke<void>('record_skill_usage', { skillId, eventType }),
+}
+
+export const rulesApi = {
+  scanSources: (paths: string[]) =>
+    invoke<ExtractionBatch>('scan_rule_sources', { paths }),
+  listRules: (status?: string, category?: string, page?: number, pageSize?: number) =>
+    invoke<BehaviorRule[]>('list_rules', {
+      status,
+      category,
+      page: page ?? 1,
+      pageSize: pageSize ?? 50,
+    }),
+  approveRule: (id: string) => invoke<BehaviorRule>('approve_rule', { id }),
+  rejectRule: (id: string) => invoke<void>('reject_rule', { id }),
+  createRule: (rule: Partial<BehaviorRule>) =>
+    invoke<BehaviorRule>('create_rule', { rule }),
+  getStats: () => invoke<RuleStats>('get_rule_stats'),
 }

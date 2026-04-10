@@ -1,8 +1,9 @@
 /// Skill persistence using SQLite (rusqlite), same connection/schema style as `vector::VectorStore`.
 
 use crate::models::skill::*;
+use chrono::{Duration, Utc};
 use rusqlite::{Connection, params};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 const SCHEMA: &str = r#"
@@ -64,6 +65,23 @@ const SCHEMA: &str = r#"
     CREATE INDEX IF NOT EXISTS idx_skills_platform ON skills(source_platform);
     CREATE INDEX IF NOT EXISTS idx_inv_session ON invocations(session_id);
     CREATE INDEX IF NOT EXISTS idx_wf_status ON workflows(status);
+    CREATE TABLE IF NOT EXISTS usage_logs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        skill_id TEXT NOT NULL,
+        event_type TEXT NOT NULL,
+        weight REAL NOT NULL DEFAULT 1.0,
+        context TEXT,
+        timestamp TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_usage_skill ON usage_logs(skill_id);
+    CREATE INDEX IF NOT EXISTS idx_usage_time ON usage_logs(timestamp);
+    CREATE TABLE IF NOT EXISTS co_occurrence (
+        skill_a TEXT NOT NULL,
+        skill_b TEXT NOT NULL,
+        count INTEGER NOT NULL DEFAULT 0,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (skill_a, skill_b)
+    );
 "#;
 
 const SKILL_SELECT: &str = "SELECT s.id, s.name, s.description, s.source_path, s.source_platform, s.author, s.version,
@@ -82,6 +100,10 @@ impl SkillStore {
         let conn = Connection::open(&db_path).map_err(|e| e.to_string())?;
         conn.execute_batch(SCHEMA).map_err(|e| e.to_string())?;
         Ok(Self { db_path })
+    }
+
+    pub fn db_path(&self) -> &PathBuf {
+        &self.db_path
     }
 
     fn connect(&self) -> Result<Connection, String> {
@@ -558,6 +580,134 @@ impl SkillStore {
                         .unwrap_or(false)
             })
             .collect())
+    }
+
+    pub fn record_usage(
+        &self,
+        skill_id: &str,
+        event_type: &str,
+        weight: f32,
+        context: Option<&str>,
+    ) -> Result<(), String> {
+        let conn = self.connect()?;
+        let ts = Utc::now().to_rfc3339();
+        conn.execute(
+            "INSERT INTO usage_logs (skill_id, event_type, weight, context, timestamp)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![
+                skill_id,
+                event_type,
+                weight as f64,
+                context,
+                ts,
+            ],
+        )
+        .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    pub fn get_usage_stats(&self, skill_id: &str) -> Result<UsageStats, String> {
+        let conn = self.connect()?;
+        let total: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM usage_logs WHERE skill_id = ?1",
+                params![skill_id],
+                |r| r.get(0),
+            )
+            .map_err(|e| e.to_string())?;
+
+        let now = Utc::now();
+        let cutoff_7 = (now - Duration::days(7)).to_rfc3339();
+        let cutoff_30 = (now - Duration::days(30)).to_rfc3339();
+
+        let last_7: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM usage_logs WHERE skill_id = ?1 AND timestamp >= ?2",
+                params![skill_id, cutoff_7],
+                |r| r.get(0),
+            )
+            .map_err(|e| e.to_string())?;
+
+        let last_30: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM usage_logs WHERE skill_id = ?1 AND timestamp >= ?2",
+                params![skill_id, cutoff_30],
+                |r| r.get(0),
+            )
+            .map_err(|e| e.to_string())?;
+
+        Ok(UsageStats {
+            total_count: total as u32,
+            last_7_days: last_7 as u32,
+            last_30_days: last_30 as u32,
+        })
+    }
+
+    pub fn get_recent_used_skills(&self, days: u32, limit: u32) -> Result<Vec<(String, u32)>, String> {
+        let conn = self.connect()?;
+        let cutoff = (Utc::now() - Duration::days(days as i64)).to_rfc3339();
+        let mut stmt = conn
+            .prepare(
+                "SELECT skill_id, COUNT(*) AS c FROM usage_logs
+                 WHERE timestamp >= ?1
+                 GROUP BY skill_id
+                 ORDER BY c DESC
+                 LIMIT ?2",
+            )
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map(params![cutoff, limit as i64], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)? as u32))
+            })
+            .map_err(|e| e.to_string())?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+    }
+
+    pub fn get_all_usage_tags(&self) -> Result<Vec<String>, String> {
+        let conn = self.connect()?;
+        let mut stmt = conn
+            .prepare("SELECT DISTINCT skill_id FROM usage_logs")
+            .map_err(|e| e.to_string())?;
+        let ids: Vec<String> = stmt
+            .query_map([], |row| row.get(0))
+            .map_err(|e| e.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?;
+
+        let mut tag_set: HashSet<String> = HashSet::new();
+        for id in ids {
+            if let Some(skill) = self.get_skill(&id)? {
+                for t in skill.tags {
+                    tag_set.insert(t);
+                }
+            }
+        }
+
+        let mut tags: Vec<String> = tag_set.into_iter().collect();
+        tags.sort();
+        Ok(tags)
+    }
+
+    pub fn update_co_occurrence(&self, skill_a: &str, skill_b: &str) -> Result<(), String> {
+        if skill_a == skill_b {
+            return Ok(());
+        }
+        let (a, b) = if skill_a <= skill_b {
+            (skill_a, skill_b)
+        } else {
+            (skill_b, skill_a)
+        };
+        let conn = self.connect()?;
+        let updated_at = Utc::now().to_rfc3339();
+        conn.execute(
+            "INSERT INTO co_occurrence (skill_a, skill_b, count, updated_at) VALUES (?1, ?2, 1, ?3)
+             ON CONFLICT(skill_a, skill_b) DO UPDATE SET
+               count = count + 1,
+               updated_at = excluded.updated_at",
+            params![a, b, updated_at],
+        )
+        .map_err(|e| e.to_string())?;
+        Ok(())
     }
 }
 

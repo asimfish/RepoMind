@@ -37,6 +37,11 @@ const router = createRouter({
           component: () => import('@/views/WorkflowsView.vue'),
         },
         {
+          path: 'rules',
+          name: 'rules',
+          component: () => import('@/views/RulesView.vue'),
+        },
+        {
           path: 'settings',
           name: 'settings',
           component: () => import('@/views/SettingsView.vue'),

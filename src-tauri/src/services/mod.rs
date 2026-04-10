@@ -1,8 +1,12 @@
 pub mod state;
+pub mod behavior_store;
 pub mod github;
 pub mod indexer;
 pub mod vector;
 pub mod skill_parser;
 pub mod skill_store;
+pub mod skill_recommender;
 pub mod transcript_collector;
 pub mod workflow_miner;
+pub mod rules_store;
+pub mod rules_extractor;

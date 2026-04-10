@@ -173,3 +173,57 @@ export interface SkillGraphData {
   nodes: SkillGraphNode[]
   edges: SkillGraphEdge[]
 }
+
+// ── 推荐系统 ──
+export interface Recommendation {
+  skill: Skill
+  score: number
+  reason: string
+  reasonType: string
+}
+
+// ── 行为规范 ──
+export interface BehaviorRule {
+  id: string
+  title: string
+  content: string
+  category: string
+  status: string
+  confidence: number
+  sourceType: string
+  sourceFile?: string
+  sourceExcerpt?: string
+  tags: string[]
+  scope: string
+  priority: number
+  createdAt: string
+  updatedAt: string
+  version: number
+}
+
+export interface RuleConflict {
+  id: string
+  ruleAId: string
+  ruleBId: string
+  conflictType: string
+  description: string
+  resolved: boolean
+}
+
+export interface RuleStats {
+  total: number
+  approved: number
+  candidate: number
+  rejected: number
+  byCategory: Record<string, number>
+}
+
+export interface ExtractionBatch {
+  id: string
+  sourceFiles: string[]
+  extractedAt: string
+  totalCandidates: number
+  approved: number
+  rejected: number
+  pending: number
+}
