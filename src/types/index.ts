@@ -88,3 +88,142 @@ export interface AppSettings {
   autoIndexOnCommit: boolean
   searchLanguage: 'en' | 'zh'
 }
+
+// Skills / workflows (Tauri camelCase JSON)
+export type SkillPlatform = 'cursor' | 'claude' | 'codex'
+
+export interface Skill {
+  id: string
+  name: string
+  description: string
+  sourcePath: string
+  sourcePlatform: SkillPlatform | string
+  author?: string | null
+  version?: string | null
+  tags: string[]
+  category?: string | null
+  triggerPatterns: string[]
+  dependsOn: string[]
+  contentHash: string
+  parsedAt: string
+  rawContent?: string
+}
+
+export interface SkillInvokeCount {
+  name: string
+  count: number
+}
+
+export interface SkillStats {
+  totalSkills: number
+  totalChains: number
+  totalWorkflows: number
+  byPlatform: Record<string, number>
+  byCategory: Record<string, number>
+  topInvoked: SkillInvokeCount[]
+  recentWorkflows: WorkflowTemplate[]
+}
+
+export interface SkillScanResult {
+  totalScanned: number
+  newSkills: number
+  updatedSkills: number
+  byPlatform: Record<string, number>
+}
+
+export type WorkflowStatus = 'discovered' | 'confirmed' | 'exported' | 'dismissed'
+
+export interface WorkflowStep {
+  order: number
+  skillName: string
+  skillId?: string | null
+  isOptional: boolean
+  avgPosition: number
+  coOccurrenceRatio: number
+}
+
+export interface WorkflowTemplate {
+  id: string
+  name: string
+  description: string
+  steps: WorkflowStep[]
+  frequency: number
+  confidence: number
+  sourceSessions: string[]
+  category?: string | null
+  createdAt: string
+  status: WorkflowStatus | string
+}
+
+export interface SkillGraphNode {
+  id: string
+  label: string
+  platform: string
+  category?: string | null
+  invokeCount: number
+}
+
+export interface SkillGraphEdge {
+  source: string
+  target: string
+  weight: number
+}
+
+export interface SkillGraphData {
+  nodes: SkillGraphNode[]
+  edges: SkillGraphEdge[]
+}
+
+// ── 推荐系统 ──
+export interface Recommendation {
+  skill: Skill
+  score: number
+  reason: string
+  reasonType: string
+}
+
+// ── 行为规范 ──
+export interface BehaviorRule {
+  id: string
+  title: string
+  content: string
+  category: string
+  status: string
+  confidence: number
+  sourceType: string
+  sourceFile?: string
+  sourceExcerpt?: string
+  tags: string[]
+  scope: string
+  priority: number
+  createdAt: string
+  updatedAt: string
+  version: number
+}
+
+export interface RuleConflict {
+  id: string
+  ruleAId: string
+  ruleBId: string
+  conflictType: string
+  description: string
+  resolved: boolean
+}
+
+export interface RuleStats {
+  total: number
+  approved: number
+  candidate: number
+  rejected: number
+  byCategory: Record<string, number>
+}
+
+export interface ExtractionBatch {
+  id: string
+  sourceFiles: string[]
+  extractedAt: string
+  totalCandidates: number
+  approved: number
+  rejected: number
+  pending: number
+}

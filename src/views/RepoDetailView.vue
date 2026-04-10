@@ -6,6 +6,7 @@ import { searchApi, indexApi } from '@/services/api'
 import type { SearchResult, ImpactResult, GraphNode, GraphEdge } from '@/types'
 import IndexBadge from '@/components/IndexBadge.vue'
 import GraphView from '@/components/GraphView.vue'
+import { symbolTypeClassMap as typeColors } from '@/constants/colors'
 
 const route = useRoute()
 const repoStore = useRepoStore()
@@ -98,15 +99,6 @@ const onGraphNodeClick = async (nodeId: string) => {
 }
 
 const reindex = () => indexApi.startIndex(repoId.value)
-
-const typeColors: Record<string, string> = {
-  function: 'bg-[#388bfd]/20 text-[#388bfd]',
-  class: 'bg-[#3fb950]/20 text-[#3fb950]',
-  method: 'bg-[#d29922]/20 text-[#d29922]',
-  variable: 'bg-[#8b949e]/20 text-[#8b949e]',
-  interface: 'bg-[#a371f7]/20 text-[#a371f7]',
-  enum: 'bg-[#f85149]/20 text-[#f85149]',
-}
 </script>
 
 <template>

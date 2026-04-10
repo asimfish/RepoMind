@@ -24,3 +24,17 @@ dist-ssr
 *.sw?
 .gitnexus
 src-tauri/.env
+
+# Cursor / IDE
+.cursor/
+!.cursor/rules/
+
+# Tauri build artifacts
+src-tauri/target/
+
+# Test coverage
+coverage/
+*.lcov
+
+# OS
+Thumbs.db

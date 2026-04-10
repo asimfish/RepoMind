@@ -6,8 +6,17 @@
 /// Configure in ~/.claude/mcp.json or ~/.cursor/mcp.json
 
 use std::io::{BufRead, Write};
+use std::path::PathBuf;
+
+use once_cell::sync::Lazy;
+use repomindapp_lib::models::agent::McpInvocation;
+use repomindapp_lib::models::skill::Skill;
+use repomindapp_lib::services::behavior_store::BehaviorStore;
+use repomindapp_lib::services::skill_store::SkillStore;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+
+static SESSION_ID: Lazy<String> = Lazy::new(|| uuid::Uuid::new_v4().to_string());
 
 #[derive(Debug, Deserialize)]
 struct McpRequest {
@@ -128,6 +137,66 @@ fn run_gitnexus(args: &[&str], cwd: &str) -> Result<String, String> {
     Ok(String::from_utf8_lossy(&out.stdout).to_string())
 }
 
+/// App data directory (parent of `state.json`), same layout as Tauri `AppState`.
+fn app_data_dir() -> PathBuf {
+    state_file()
+        .parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| PathBuf::from("."))
+}
+
+fn open_skill_store() -> Result<SkillStore, String> {
+    SkillStore::open(&app_data_dir())
+}
+
+/// Tools whose `tools/call` is persisted for Meta-Agent behavior learning (`agent_profile` excluded).
+const BEHAVIOR_RECORDED_TOOLS: &[&str] = &[
+    "list_repos",
+    "search",
+    "context",
+    "impact",
+    "cypher",
+    "list_skills",
+    "search_skills",
+    "get_workflow",
+];
+
+fn record_tool_invocation(tool_name: &str, params: &Value) {
+    if !BEHAVIOR_RECORDED_TOOLS.contains(&tool_name) {
+        return;
+    }
+    if let Ok(store) = BehaviorStore::open(&app_data_dir()) {
+        let inv = McpInvocation {
+            id: uuid::Uuid::new_v4().to_string(),
+            session_id: SESSION_ID.clone(),
+            timestamp: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as i64,
+            tool_name: tool_name.to_string(),
+            arguments_json: params.to_string(),
+            duration_ms: None,
+            repo_id: None,
+        };
+        let _ = store.record_invocation(&inv);
+    }
+}
+
+/// Omit `raw_content` in MCP responses to keep payloads small.
+fn skills_json_for_mcp(skills: &[Skill]) -> Value {
+    let items: Vec<Value> = skills
+        .iter()
+        .map(|s| {
+            let mut v = serde_json::to_value(s).unwrap_or(json!({}));
+            if let Some(obj) = v.as_object_mut() {
+                obj.remove("raw_content");
+            }
+            v
+        })
+        .collect();
+    json!(items)
+}
+
 fn handle(req: McpRequest) -> McpResponse {
     let id = req.id.clone();
     let params = req.params.unwrap_or(json!({}));
@@ -200,6 +269,50 @@ fn handle(req: McpRequest) -> McpResponse {
                         },
                         "required": ["repo", "query"]
                     }
+                },
+                {
+                    "name": "list_skills",
+                    "description": "List all indexed skills across Cursor/Claude/Codex platforms. Filter by platform, category, or search query.",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "platform": { "type": "string", "description": "Filter: cursor, claude, codex" },
+                            "category": { "type": "string", "description": "Filter: research, coding, ml, etc." },
+                            "query": { "type": "string", "description": "Search by name or description" }
+                        }
+                    }
+                },
+                {
+                    "name": "search_skills",
+                    "description": "Find skills by natural language query across all platforms",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "query": { "type": "string", "description": "Natural language query" }
+                        },
+                        "required": ["query"]
+                    }
+                },
+                {
+                    "name": "get_workflow",
+                    "description": "Get a discovered workflow template - a chain of skills that are frequently used together",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "name": { "type": "string", "description": "Workflow name or keyword" }
+                        },
+                        "required": ["name"]
+                    }
+                },
+                {
+                    "name": "agent_profile",
+                    "description": "View Meta-Agent's learned user profile: tool usage stats, patterns, preferences",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "section": { "type": "string", "description": "all, affinity, or patterns" }
+                        }
+                    }
                 }
             ]
         })),
@@ -209,7 +322,7 @@ fn handle(req: McpRequest) -> McpResponse {
             let tool = params["name"].as_str().unwrap_or("");
             let args = &params["arguments"];
 
-            match tool {
+            let response = match tool {
                 "list_repos" => {
                     let repos = load_repos();
                     let list: Vec<Value> = repos.iter().map(|r| json!({
@@ -304,8 +417,122 @@ fn handle(req: McpRequest) -> McpResponse {
                     }
                 }
 
-                _ => McpResponse::err(id, -32601, &format!("Unknown tool: {}", tool))
-            }
+                "list_skills" => match open_skill_store() {
+                    Err(e) => McpResponse::ok(id, json!({
+                        "content": [{ "type": "text", "text": format!("SkillStore error: {}", e) }],
+                        "isError": true
+                    })),
+                    Ok(store) => {
+                        let platform = args["platform"].as_str();
+                        let category = args["category"].as_str();
+                        let query = args["query"].as_str();
+                        match store.list_skills(platform, category, query) {
+                            Err(e) => McpResponse::ok(id, json!({
+                                "content": [{ "type": "text", "text": format!("list_skills failed: {}", e) }],
+                                "isError": true
+                            })),
+                            Ok(skills) => {
+                                let text = serde_json::to_string_pretty(&skills_json_for_mcp(&skills))
+                                    .unwrap_or_default();
+                                McpResponse::ok(id, json!({
+                                    "content": [{ "type": "text", "text": text }]
+                                }))
+                            }
+                        }
+                    }
+                }
+
+                "search_skills" => {
+                    let query = args["query"].as_str().unwrap_or("");
+                    if query.is_empty() {
+                        McpResponse::ok(id, json!({
+                            "content": [{ "type": "text", "text": "search_skills requires non-empty \"query\"." }],
+                            "isError": true
+                        }))
+                    } else {
+                        match open_skill_store() {
+                            Err(e) => McpResponse::ok(id, json!({
+                                "content": [{ "type": "text", "text": format!("SkillStore error: {}", e) }],
+                                "isError": true
+                            })),
+                            Ok(store) => match store.search_skills(query) {
+                                Err(e) => McpResponse::ok(id, json!({
+                                    "content": [{ "type": "text", "text": format!("search_skills failed: {}", e) }],
+                                    "isError": true
+                                })),
+                                Ok(skills) => {
+                                    let text = serde_json::to_string_pretty(&skills_json_for_mcp(&skills))
+                                        .unwrap_or_default();
+                                    McpResponse::ok(id, json!({
+                                        "content": [{ "type": "text", "text": text }]
+                                    }))
+                                }
+                            },
+                        }
+                    }
+                }
+
+                "get_workflow" => {
+                    let name = args["name"].as_str().unwrap_or("");
+                    if name.is_empty() {
+                        McpResponse::ok(id.clone(), json!({
+                            "content": [{ "type": "text", "text": "get_workflow requires non-empty \"name\"." }],
+                            "isError": true
+                        }))
+                    } else {
+                        match open_skill_store() {
+                            Err(e) => McpResponse::ok(id.clone(), json!({
+                                "content": [{ "type": "text", "text": format!("SkillStore error: {}", e) }],
+                                "isError": true
+                            })),
+                            Ok(store) => match store.find_workflows_by_name(name) {
+                                Err(e) => McpResponse::ok(id.clone(), json!({
+                                    "content": [{ "type": "text", "text": format!("get_workflow failed: {}", e) }],
+                                    "isError": true
+                                })),
+                                Ok(wfs) => {
+                                    let text = serde_json::to_string_pretty(&wfs).unwrap_or_default();
+                                    McpResponse::ok(id.clone(), json!({
+                                        "content": [{ "type": "text", "text": text }]
+                                    }))
+                                }
+                            },
+                        }
+                    }
+                }
+
+                "agent_profile" => {
+                    let section = args.get("section").and_then(|v| v.as_str()).unwrap_or("all");
+                    match BehaviorStore::open(&app_data_dir()) {
+                        Err(e) => McpResponse::ok(id.clone(), json!({
+                            "content": [{ "type": "text", "text": format!("BehaviorStore error: {}", e) }],
+                            "isError": true
+                        })),
+                        Ok(store) => match store.get_user_profile() {
+                            Err(e) => McpResponse::ok(id.clone(), json!({
+                                "content": [{ "type": "text", "text": format!("get_user_profile failed: {}", e) }],
+                                "isError": true
+                            })),
+                            Ok(profile) => {
+                                let body = match section {
+                                    "affinity" => json!({ "tool_affinity": profile.tool_affinity }),
+                                    "patterns" => json!({ "top_patterns": profile.top_patterns }),
+                                    _ => serde_json::to_value(&profile).unwrap_or(json!({})),
+                                };
+                                let text = serde_json::to_string_pretty(&body).unwrap_or_default();
+                                McpResponse::ok(id.clone(), json!({
+                                    "content": [{ "type": "text", "text": text }]
+                                }))
+                            }
+                        },
+                    }
+                }
+
+                _ => McpResponse::err(id.clone(), -32601, &format!("Unknown tool: {}", tool))
+            };
+
+            record_tool_invocation(tool, &params);
+            response
         }
 
         _ => McpResponse::err(id, -32601, &format!("Method not found: {}", req.method))

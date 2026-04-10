@@ -5,6 +5,7 @@ import { useRepoStore } from '@/stores/repo'
 import { searchApi } from '@/services/api'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import type { SearchResult } from '@/types'
+import { symbolTypeClassMap as typeColors } from '@/constants/colors'
 
 const router = useRouter()
 const repoStore = useRepoStore()
@@ -74,15 +75,6 @@ const selectResult = (r: SearchResult) => {
   isOpen.value = false
   query.value = ''
   results.value = []
-}
-
-const typeColors: Record<string, string> = {
-  function: 'text-[#388bfd]',
-  class: 'text-[#3fb950]',
-  method: 'text-[#d29922]',
-  variable: 'text-[#8b949e]',
-  interface: 'text-[#a371f7]',
-  enum: 'text-[#f85149]',
 }
 </script>
 

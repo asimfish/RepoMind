@@ -27,6 +27,21 @@ const router = createRouter({
           component: () => import('@/views/SearchView.vue'),
         },
         {
+          path: 'skills',
+          name: 'skills',
+          component: () => import('@/views/SkillsView.vue'),
+        },
+        {
+          path: 'workflows',
+          name: 'workflows',
+          component: () => import('@/views/WorkflowsView.vue'),
+        },
+        {
+          path: 'rules',
+          name: 'rules',
+          component: () => import('@/views/RulesView.vue'),
+        },
+        {
           path: 'settings',
           name: 'settings',
           component: () => import('@/views/SettingsView.vue'),
@@ -37,11 +52,6 @@ const router = createRouter({
       path: '/login',
       name: 'login',
       component: () => import('@/views/LoginView.vue'),
-    },
-    {
-      path: '/oauth-callback',
-      name: 'oauth-callback',
-      component: () => import('@/views/OAuthCallbackView.vue'),
     },
   ],
 })

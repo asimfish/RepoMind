@@ -13,6 +13,14 @@ use commands::{
     index::{start_index, cancel_index, get_index_status},
     search::{search, get_context, get_impact, get_graph, get_ai_summary, validate_claude_key, get_mcp_status},
     settings::{get_settings, update_settings},
+    skill::{
+        scan_skills, list_skills, get_skill, get_skill_stats, collect_invocations, mine_workflows,
+        list_workflows, update_workflow_status, get_skill_graph, export_workflow,
+        record_skill_usage, get_recommendations,
+    },
+    rules::{
+        scan_rule_sources, list_rules, approve_rule, reject_rule, create_rule, get_rule_stats,
+    },
 };
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -55,6 +63,24 @@ pub fn run() {
             get_mcp_status,
             get_settings,
             update_settings,
+            scan_skills,
+            list_skills,
+            get_skill,
+            get_skill_stats,
+            collect_invocations,
+            mine_workflows,
+            list_workflows,
+            update_workflow_status,
+            get_skill_graph,
+            export_workflow,
+            record_skill_usage,
+            get_recommendations,
+            scan_rule_sources,
+            list_rules,
+            approve_rule,
+            reject_rule,
+            create_rule,
+            get_rule_stats,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

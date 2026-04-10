@@ -1,5 +1,23 @@
 import { invoke } from '@tauri-apps/api/core'
-import type { GitHubUser, Repo, AppSettings, IndexStatus, SearchResult, GraphNode, GraphEdge, ImpactResult } from '@/types'
+import type {
+  GitHubUser,
+  Repo,
+  AppSettings,
+  IndexStatus,
+  SearchResult,
+  GraphNode,
+  GraphEdge,
+  ImpactResult,
+  Skill,
+  SkillScanResult,
+  SkillStats,
+  WorkflowTemplate,
+  SkillGraphData,
+  Recommendation,
+  BehaviorRule,
+  RuleStats,
+  ExtractionBatch,
+} from '@/types'
 
 export const githubAuthApi = {
   startOAuth: () => invoke<void>('start_github_oauth'),
@@ -43,4 +61,47 @@ export const settingsApi = {
   validateClaudeKey: (apiKey: string) =>
     invoke<boolean>('validate_claude_key', { apiKey }),
   getMcpStatus: () => invoke<{ installed: boolean; path: string }>('get_mcp_status'),
+}
+
+export const skillApi = {
+  listSkills: (platform?: string, category?: string, search?: string) =>
+    invoke<Skill[]>('list_skills', { platform, category, search }),
+  getSkill: (skillId: string) => invoke<Skill | null>('get_skill', { skillId }),
+  scanSkills: () => invoke<SkillScanResult>('scan_skills'),
+  getSkillStats: () => invoke<SkillStats>('get_skill_stats'),
+  listWorkflows: (status?: string) =>
+    invoke<WorkflowTemplate[]>('list_workflows', { status }),
+  mineWorkflows: (minFrequency?: number, minLength?: number) =>
+    invoke<WorkflowTemplate[]>('mine_workflows', { minFrequency, minLength }),
+  updateWorkflowStatus: (workflowId: string, status: string) =>
+    invoke<void>('update_workflow_status', { workflowId, status }),
+  exportWorkflow: (workflowId: string, targetDir?: string) =>
+    invoke<string>('export_workflow', { workflowId, targetDir }),
+  collectInvocations: (transcriptsDir?: string) =>
+    invoke<number>('collect_invocations', { transcriptsDir }),
+  getSkillGraph: () => invoke<SkillGraphData>('get_skill_graph'),
+}
+
+export const recommendApi = {
+  getRecommendations: (limit?: number) =>
+    invoke<Recommendation[]>('get_recommendations', { limit }),
+  recordUsage: (skillId: string, eventType: string) =>
+    invoke<void>('record_skill_usage', { skillId, eventType }),
+}
+
+export const rulesApi = {
+  scanSources: (paths: string[]) =>
+    invoke<ExtractionBatch>('scan_rule_sources', { paths }),
+  listRules: (status?: string, category?: string, page?: number, pageSize?: number) =>
+    invoke<BehaviorRule[]>('list_rules', {
+      status,
+      category,
+      page: page ?? 1,
+      pageSize: pageSize ?? 50,
+    }),
+  approveRule: (id: string) => invoke<BehaviorRule>('approve_rule', { id }),
+  rejectRule: (id: string) => invoke<void>('reject_rule', { id }),
+  createRule: (rule: Partial<BehaviorRule>) =>
+    invoke<BehaviorRule>('create_rule', { rule }),
+  getStats: () => invoke<RuleStats>('get_rule_stats'),
 }
